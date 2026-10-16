@@ -30,7 +30,7 @@
     --track:rgba(0,0,0,.14); --muted:rgba(0,0,0,.6); --err:#B00020;
     --cursor-stroke:white; color-scheme:light;
   }
-  :root{ --font:'Galmuri11','Pixelify Sans','DotGothic16','Malgun Gothic','Apple SD Gothic Neo',monospace; }
+  :root{ --num-row:34px; --font:'Galmuri11','Pixelify Sans','DotGothic16','Malgun Gothic','Apple SD Gothic Neo',monospace; }
   body{-webkit-font-smoothing:none;font-smooth:never;letter-spacing:.01em;}
 
   /* simple black triangle cursor */
@@ -115,15 +115,17 @@
     display:flex;align-items:center;justify-content:center;transition:background .2s,color .2s;
   }
   .round:hover{background:var(--accent);color:#000;}
-  .dow,.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;}
+  .dow,.week{display:grid;grid-template-columns:repeat(7,1fr);column-gap:8px;}
+  .grid{display:flex;flex-direction:column;gap:8px;}
+  .week{position:relative;min-height:100px;row-gap:3px;padding-bottom:8px;}
   .dow div{text-align:center;color:var(--ink);font-weight:700;font-size:13px;padding:6px 0;}
   .cell{
-    position:relative;min-height:100px;border:2px solid var(--accent);border-radius:22px;
+    position:relative;min-height:100px;grid-row:1 / -1;border:2px solid var(--accent);border-radius:22px;
     background:transparent;padding:8px 8px 6px;text-align:left;color:var(--ink);
     display:flex;flex-direction:column;gap:4px;overflow:hidden;
     transition:background .2s, transform .2s;
   }
-  .cell:hover{background:var(--wash);transform:translateY(-2px);}
+  .cell:hover{background:var(--wash);}
   .cell.out{opacity:.35;}
   .cell .num{font-size:13px;font-weight:700;}
   .cell.today .num{
@@ -133,11 +135,17 @@
   .cell.has{background:var(--accent);color:#000;}
   .cell.has:hover{background:var(--accent-deep);}
   .cell.has.today .num{background:#000;color:var(--accent);}
-  .chip{
-    font-size:12px;font-weight:700;color:#000;line-height:1.25;
-    background:rgba(0,0,0,.1);border-radius:999px;padding:3px 8px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  /* calendar plans sit on top of the day cells; taps go through to the day */
+  .chip,.bar{
+    position:relative;z-index:1;pointer-events:none;margin:0 6px;
+    font-size:12px;font-weight:700;line-height:1.25;border-radius:10px;padding:3px 7px;
+    word-break:keep-all;overflow-wrap:anywhere;
   }
+  .chip{color:#000;background:rgba(0,0,0,.1);align-self:start;}
+  .chip.out{opacity:.35;}
+  .bar{background:#000;color:var(--accent);text-align:center;}
+  .bar.cl{margin-left:0;border-top-left-radius:0;border-bottom-left-radius:0;}
+  .bar.cr{margin-right:0;border-top-right-radius:0;border-bottom-right-radius:0;}
 
   /* ───── Modal ───── */
   .overlay{
@@ -299,10 +307,11 @@
     .tab{font-size:13px;padding:12px 2px;}
     .content{padding:16px 12px 30px 22px;}
     h1{font-size:20px;}
-    .dow,.grid{gap:4px;}
+    .dow,.week{column-gap:4px;} .grid{gap:4px;} .week{min-height:70px;row-gap:2px;padding-bottom:5px;}
     .cell{min-height:70px;border-radius:14px;padding:5px 4px;border-width:1.5px;}
-    .chip{font-size:10px;padding:2px 5px;}
+    .chip,.bar{font-size:10px;padding:2px 4px;margin:0 2px;border-radius:6px;}
     .cell .num{font-size:11px;}
+    :root{--num-row:24px;}
     .cal-title{font-size:18px;min-width:130px;}
     .d-head{display:none;}
     .d-row{
@@ -453,6 +462,9 @@
     <div id="formBox">
       <label class="f" for="fTitle">Title *</label>
       <input class="inp" id="fTitle" maxlength="30" placeholder="Shown on the calendar">
+      <label class="f" for="fEnd">Until</label>
+      <input class="inp" id="fEnd" type="date" aria-describedby="fEndHint">
+      <div class="hint" id="fEndHint">Pick an end date for a plan that runs over several days. Leave empty for one day.</div>
       <label class="f" for="fWho">W/</label>
       <input class="inp" id="fWho" maxlength="30" placeholder="Who you're going with (optional)">
       <label class="f" for="fMemo">Details</label>
@@ -729,30 +741,66 @@ $('cropApply').onclick = async ()=>{
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 let events = {};
 let view = new Date(); view.setDate(1);
-let selKey = null, editIdx = null;
+let selKey = null, editRef = null;   // editRef = { k: start day key, i: index in events[k] }
 const keyOf = (y,m,d) => `${y}-${pad(m+1)}-${pad(d)}`;
+const keyDate = k => { const [y,m,d]=k.split('-').map(Number); return new Date(y,m-1,d); };
+const dayDiff = (a,b) => Math.round((keyDate(b)-keyDate(a))/86400000);
+const shortDate = k => { const d=keyDate(k); return `${MONTHS[d.getMonth()].slice(0,3)} ${d.getDate()}`; };
+const endOf = (k,e) => (e.end && e.end>k) ? e.end : k;
+
+/* every plan that touches the day range [from, to] */
+function plansIn(from, to){
+  const out=[];
+  Object.keys(events).forEach(k=>(events[k]||[]).forEach((e,i)=>{
+    const en=endOf(k,e);
+    if(k<=to && en>=from) out.push({k,i,e,end:en,multi:en>k});
+  }));
+  return out;
+}
 
 function renderCal(){
   const y = view.getFullYear(), m = view.getMonth();
   $('calTitle').textContent = `${MONTHS[m]} ${y}`;
   const first = new Date(y,m,1).getDay();
   const days = new Date(y,m+1,0).getDate();
-  const prevDays = new Date(y,m,0).getDate();
   const total = Math.ceil((first+days)/7)*7;
   const now = new Date();
   const todayKey = keyOf(now.getFullYear(),now.getMonth(),now.getDate());
   let html = '';
-  for(let i=0;i<total;i++){
-    let d, mm=m, out=false;
-    if(i<first){ d=prevDays-first+i+1; mm=m-1; out=true; }
-    else if(i>=first+days){ d=i-first-days+1; mm=m+1; out=true; }
-    else d=i-first+1;
-    const dt = new Date(y,mm,d);
-    const k = keyOf(dt.getFullYear(),dt.getMonth(),dt.getDate());
-    const list = events[k] || [];
-    const cls = ['cell']; if(out) cls.push('out'); if(list.length) cls.push('has'); if(k===todayKey) cls.push('today');
-    html += `<button class="${cls.join(' ')}" data-k="${k}"><span class="num">${d}</span>` +
-      list.map(e=>`<span class="chip">${esc(e.title)}</span>`).join('') + `</button>`;
+  for(let w=0; w<total/7; w++){
+    const keys=[], outs=[];
+    for(let c=0;c<7;c++){
+      const dt=new Date(y,m,1-first+w*7+c);
+      keys.push(keyOf(dt.getFullYear(),dt.getMonth(),dt.getDate()));
+      outs.push(dt.getMonth()!==m);
+    }
+    // place plans in lanes: multi-day bars first (earlier + longer on top), then one-day plans
+    const items = plansIn(keys[0],keys[6]).map(p=>({...p,
+      c0:Math.max(0,dayDiff(keys[0],p.k)), c1:Math.min(6,dayDiff(keys[0],p.end))}));
+    items.sort((a,b)=> (b.multi-a.multi) || (a.multi ? (a.k<b.k?-1:a.k>b.k?1:(b.end>a.end?1:b.end<a.end?-1:0)) : (a.c0-b.c0)) || (a.i-b.i));
+    const lanes=[], has=new Array(7).fill(false);
+    items.forEach(it=>{
+      let l=0;
+      while(lanes[l] && lanes[l].slice(it.c0,it.c1+1).some(Boolean)) l++;
+      lanes[l]=lanes[l]||new Array(7).fill(false);
+      for(let c=it.c0;c<=it.c1;c++){ lanes[l][c]=true; has[c]=true; }
+      it.lane=l;
+    });
+    html += `<div class="week" style="grid-template-rows:var(--num-row) repeat(${lanes.length},auto) 1fr">`;
+    keys.forEach((k,c)=>{
+      const cls=['cell']; if(outs[c]) cls.push('out'); if(has[c]) cls.push('has'); if(k===todayKey) cls.push('today');
+      html += `<button class="${cls.join(' ')}" style="grid-column:${c+1}" data-k="${k}" aria-label="${shortDate(k)}"><span class="num">${keyDate(k).getDate()}</span></button>`;
+    });
+    items.forEach(it=>{
+      const pos=`grid-column:${it.c0+1} / ${it.c1+2};grid-row:${it.lane+2}`;
+      if(it.multi){
+        const cls=['bar']; if(it.k<keys[0]) cls.push('cl'); if(it.end>keys[6]) cls.push('cr');
+        html += `<span class="${cls.join(' ')}" style="${pos}">${esc(it.e.title)}</span>`;
+      } else {
+        html += `<span class="chip${outs[it.c0]?' out':''}" style="${pos}">${esc(it.e.title)}</span>`;
+      }
+    });
+    html += '</div>';
   }
   $('grid').innerHTML = html;
 }
@@ -762,47 +810,55 @@ $('next').onclick = ()=>{ view.setMonth(view.getMonth()+1); renderCal(); };
 $('todayBtn').onclick = ()=>{ view = new Date(); view.setDate(1); renderCal(); };
 
 function openModal(k){
-  selKey = k; editIdx = null;
+  selKey = k; editRef = null;
   const [y,m,d] = k.split('-').map(Number);
   $('mTitle').textContent = `${MONTHS[m-1]} ${d}, ${y}`;
   drawModal();
   $('overlay').classList.add('open');
 }
 function drawModal(){
-  const list = events[selKey] || [];
-  $('evList').innerHTML = list.map((e,i)=>`
+  const list = plansIn(selKey, selKey).sort((a,b)=>(b.multi-a.multi)||(a.k<b.k?-1:a.k>b.k?1:a.i-b.i));
+  $('evList').innerHTML = list.map(p=>`
     <div class="ev">
-      <b>${esc(e.title)}</b>
-      ${e.who?`<div class="w">W/ ${esc(e.who)}</div>`:''}
-      ${e.memo?`<div class="memo">${esc(e.memo)}</div>`:''}
-      <div class="row"><button data-edit="${i}">Edit</button><button data-del="${i}">Delete</button></div>
+      <b>${esc(p.e.title)}</b>
+      ${p.multi?`<div class="w">${shortDate(p.k)} – ${shortDate(p.end)}</div>`:''}
+      ${p.e.who?`<div class="w">W/ ${esc(p.e.who)}</div>`:''}
+      ${p.e.memo?`<div class="memo">${esc(p.e.memo)}</div>`:''}
+      <div class="row"><button data-edit="${p.k}|${p.i}">Edit</button><button data-del="${p.k}|${p.i}">Delete</button></div>
     </div>`).join('');
-  const canAdd = editIdx!==null || list.length<3;
+  const canAdd = editRef!==null || list.length<3;
   $('formBox').style.display = canAdd ? 'block':'none';
   $('saveBtn').style.display = canAdd ? 'inline-block':'none';
   $('fullHint').style.display = canAdd ? 'none':'block';
-  const cur = editIdx!==null ? list[editIdx] : {title:'',who:'',memo:''};
+  const cur = editRef ? events[editRef.k][editRef.i] : {title:'',who:'',memo:''};
+  const startK = editRef ? editRef.k : selKey;
   $('fTitle').value = cur.title; $('fWho').value = cur.who||''; $('fMemo').value = cur.memo||'';
+  $('fEnd').min = startK; $('fEnd').value = (cur.end && cur.end>startK) ? cur.end : '';
   $('fErr').textContent = '';
-  $('saveBtn').textContent = editIdx!==null ? 'Save changes' : 'Save';
+  $('saveBtn').textContent = editRef ? 'Save changes' : 'Save';
 }
+const refOf = v => { const [k,i]=v.split('|'); return {k, i:Number(i)}; };
 $('evList').addEventListener('click',async e=>{
   const ed = e.target.dataset.edit, de = e.target.dataset.del;
-  if(ed!==undefined){ editIdx = Number(ed); drawModal(); $('fTitle').focus(); }
+  if(ed!==undefined){ editRef = refOf(ed); drawModal(); $('fTitle').focus(); }
   if(de!==undefined){
-    events[selKey].splice(Number(de),1);
-    if(!events[selKey].length) delete events[selKey];
-    editIdx = null; await store.set('events',events); drawModal(); renderCal();
+    const r = refOf(de);
+    events[r.k].splice(r.i,1);
+    if(!events[r.k].length) delete events[r.k];
+    editRef = null; await store.set('events',events); drawModal(); renderCal();
   }
 });
 $('saveBtn').onclick = async ()=>{
   const title = $('fTitle').value.trim();
   if(!title){ $('fErr').textContent = 'Please enter a title.'; $('fTitle').focus(); return; }
+  const startK = editRef ? editRef.k : selKey;
+  const endV = $('fEnd').value;
+  if(endV && endV<startK){ $('fErr').textContent = `The end date can’t be before ${shortDate(startK)}.`; $('fEnd').focus(); return; }
   const item = {title, who:$('fWho').value.trim(), memo:$('fMemo').value.trim()};
-  events[selKey] = events[selKey] || [];
-  if(editIdx!==null) events[selKey][editIdx] = item;
-  else if(events[selKey].length<3) events[selKey].push(item);
-  editIdx = null;
+  if(endV && endV>startK) item.end = endV;
+  if(editRef) events[editRef.k][editRef.i] = item;
+  else if(plansIn(selKey,selKey).length<3){ events[selKey] = events[selKey] || []; events[selKey].push(item); }
+  editRef = null;
   await store.set('events',events);
   drawModal(); renderCal();
 };

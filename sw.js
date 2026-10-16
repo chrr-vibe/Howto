@@ -2,7 +2,7 @@
    - Cache names all start with "machasal-" so they never collide with the first app (Mgju-app).
    - On update it deletes ONLY old "machasal-" caches; other apps' caches on this github.io address are left alone.
    - Bump VERSION whenever you upload a new index.html so phones pick up the change. */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const PREFIX  = 'machasal-';
 const CACHE   = PREFIX + VERSION;
 const CORE = [
