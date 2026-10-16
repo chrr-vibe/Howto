@@ -1050,7 +1050,8 @@ $('importFile').addEventListener('change', e=>{
 
 /* ───── Offline / install support ───── */
 if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
-  window.addEventListener('load',()=>{ navigator.serviceWorker.register('./sw.js',{scope:'./'}).catch(()=>{});   // scope = this repo folder only });
+  // scope = this repo folder only
+  window.addEventListener('load',()=>{ navigator.serviceWorker.register('./sw.js',{scope:'./'}).catch(()=>{}); });
 }
 
 /* ───── Init ───── */
