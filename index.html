@@ -183,9 +183,9 @@
   .err{font-size:12px;color:var(--err);margin-top:6px;min-height:16px;}
 
   /* ───── Daily ───── */
-  .d-head,.d-row{display:grid;grid-template-columns:132px 1fr 112px 44px 34px;gap:8px;align-items:center;}
+  .d-head,.d-row{display:grid;grid-template-columns:132px 1fr 112px 44px 44px 34px;gap:8px;align-items:center;}
   .d-head{padding:0 14px 8px;color:var(--ink);font-size:13px;font-weight:700;}
-  .d-head div:nth-child(4){text-align:center;}
+  .d-head div:nth-child(4),.d-head div:nth-child(5){text-align:center;}
   .d-row{
     border:2px solid var(--accent);border-radius:999px;padding:8px 12px 8px 14px;margin-bottom:10px;
     transition:background .25s,color .25s;
@@ -194,6 +194,27 @@
   .d-row.done .inp,.d-row.done .sel,.d-row.done .sep{color:#000;border-color:rgba(0,0,0,.45);}
   .d-row.done .inp::placeholder{color:rgba(0,0,0,.45);}
   .d-row .inp,.d-row .sel{border-radius:999px;padding:7px 12px;font-size:14px;}
+  .task-wrap{position:relative;min-width:0;}
+  .task-wrap .inp{width:100%;}
+  .task-wrap::after{
+    content:"";position:absolute;left:10px;right:10px;top:50%;height:2px;margin-top:-1px;
+    background:#000;transform:scaleX(0);transform-origin:left;transition:transform .25s;pointer-events:none;
+  }
+  .d-row.done .task-wrap::after{transform:scaleX(1);}
+  .d-row.done .task-wrap .inp{color:rgba(0,0,0,.55);}
+  .pri{
+    border:none;background:transparent;padding:0;width:44px;height:36px;
+    display:flex;align-items:center;justify-content:center;touch-action:manipulation;-webkit-tap-highlight-color:transparent;
+    transition:transform .1s;
+  }
+  .pri svg{width:30px;height:26px;display:block;}
+  .pri:active{transform:scale(.85);}
+  .pri:focus-visible{outline:2px solid var(--ink);outline-offset:1px;border-radius:10px;}
+  .pri.p0{--ha:rgba(0,0,0,.16);--hb:rgba(0,0,0,.16);--hh:0;}
+  .pri.p1{--ha:#EA4F5C;--hb:#C23441;}
+  .pri.p2{--ha:#F4C542;--hb:#D9A21F;}
+  .pri.p3{--ha:#4CC160;--hb:#2E9A43;}
+  .pri.p4{--ha:#4A88E2;--hb:#2F66BC;}
   .time{display:flex;align-items:center;gap:4px;}
   .time .inp{padding:7px 4px;text-align:center;width:56px;}
   .sep{color:var(--ink);font-weight:700;}
@@ -244,7 +265,7 @@
   .seg{display:flex;gap:6px;flex-wrap:wrap;}
 
   /* ───── Lukas pet ───── */
-  .hp-a{fill:var(--accent);} .hp-b{fill:var(--accent-deep);} .hp-h{fill:#fff;opacity:.6;}
+  .hp-a{fill:var(--ha,var(--accent));} .hp-b{fill:var(--hb,var(--accent-deep));} .hp-h{fill:#fff;opacity:var(--hh,.6);}
   .win{
     margin:22px 0 0 22px;padding:3px;background:#C0C0C0;border-radius:0;
     box-shadow:inset -1px -1px #0a0a0a,inset 1px 1px #dfdfdf,inset -2px -2px #808080,inset 2px 2px #ffffff;
@@ -315,11 +336,11 @@
     .cal-title{font-size:18px;min-width:130px;}
     .d-head{display:none;}
     .d-row{
-      grid-template-columns:1fr 44px 34px;border-radius:26px;
-      grid-template-areas:"time chk x" "task task task" "cat cat cat";
+      grid-template-columns:1fr 44px 44px 34px;border-radius:26px;
+      grid-template-areas:"time pri chk x" "task task task task" "cat cat cat cat";
     }
-    .d-row .time{grid-area:time}.d-row .chk{grid-area:chk}.d-row .x{grid-area:x}
-    .d-row .task{grid-area:task}.d-row .cat{grid-area:cat}
+    .d-row .time{grid-area:time}.d-row .pri{grid-area:pri}.d-row .chk{grid-area:chk}.d-row .x{grid-area:x}
+    .d-row .task-wrap{grid-area:task}.d-row .cat{grid-area:cat}
   }
 </style>
 </head>
@@ -391,11 +412,13 @@
 
         <!-- Daily -->
         <section class="page" id="page-day">
-          <div class="d-head"><div>Time</div><div>Task</div><div>Category</div><div>Mandatory</div><div></div></div>
+          <div class="d-head"><div>Time</div><div>Task</div><div>Category</div><div>Priority</div><div>Done</div><div></div></div>
           <div id="rows"></div>
           <div class="d-actions">
             <button class="pill-btn solid" id="addRow">+ Add row</button>
             <button class="pill-btn" id="sortRows">Sort by time</button>
+            <button class="pill-btn" id="sortPri">Sort by color</button>
+            <button class="pill-btn" id="clearDone">Clear done</button>
             <button class="pill-btn" id="clearRows">Clear all</button>
           </div>
         </section>
@@ -871,22 +894,27 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeModal(); if(
 let rows = [];
 const CATS = ['Work','Chores','Plans','Study'];
 const uid = ()=>Math.random().toString(36).slice(2,9);
+// priority hearts: 0 none → 1 red (most urgent) → 2 yellow → 3 green → 4 blue
+const PRI_NAMES = ['None','Red','Yellow','Green','Blue'];
+// older saves stored the checkbox as `mand`; it now means done
+const normRows = list => list.map(({mand,...r})=>({...r, done: r.done ?? !!mand, pri: r.pri || 0}));
 
 function renderRows(){
   const box = $('rows');
   if(!rows.length){ box.innerHTML = '<div class="empty-note">Tap “Add row” to start today’s list.</div>'; return; }
   box.innerHTML = rows.map(r=>`
-    <div class="d-row ${r.mand?'done':''}" data-id="${r.id}">
+    <div class="d-row ${r.done?'done':''}" data-id="${r.id}">
       <div class="time">
         <input class="inp" data-f="h" type="number" min="0" max="23" placeholder="hr" value="${r.h}" aria-label="Hour">
         <span class="sep">:</span>
         <input class="inp" data-f="m" type="number" min="0" max="59" placeholder="min" value="${r.m}" aria-label="Minute">
       </div>
-      <input class="inp task" data-f="task" maxlength="60" placeholder="Task" value="${esc(r.task)}">
+      <div class="task-wrap"><input class="inp task" data-f="task" maxlength="60" placeholder="Task" value="${esc(r.task)}"></div>
       <select class="sel cat" data-f="cat" aria-label="Category">
         ${CATS.map(c=>`<option ${r.cat===c?'selected':''}>${c}</option>`).join('')}
       </select>
-      <label class="chk"><input type="checkbox" data-f="mand" ${r.mand?'checked':''} aria-label="Mandatory"></label>
+      <button class="pri p${r.pri}" data-pri="1" aria-label="Priority: ${PRI_NAMES[r.pri]}"><svg viewBox="0 0 7 6" shape-rendering="crispEdges" aria-hidden="true"><use href="#px-heart"/></svg></button>
+      <label class="chk"><input type="checkbox" data-f="done" ${r.done?'checked':''} aria-label="Done"></label>
       <button class="x" data-rm="1" aria-label="Delete row">×</button>
     </div>`).join('');
 }
@@ -898,19 +926,27 @@ function clampField(f,v){
 $('rows').addEventListener('input',async e=>{
   const row = e.target.closest('.d-row'); if(!row) return;
   const r = rows.find(x=>x.id===row.dataset.id); const f = e.target.dataset.f; if(!r||!f) return;
-  if(f==='mand'){ r.mand = e.target.checked; row.classList.toggle('done',r.mand); }
+  if(f==='done'){ r.done = e.target.checked; row.classList.toggle('done',r.done); }
   else if(f==='h'||f==='m'){ r[f] = clampField(f,e.target.value); if(String(e.target.value)!==String(r[f])) e.target.value = r[f]; }
   else r[f] = e.target.value;
   await store.set('rows',rows);
 });
 $('rows').addEventListener('click',async e=>{
+  const pri = e.target.closest('[data-pri]');
+  if(pri){
+    const r = rows.find(x=>x.id===pri.closest('.d-row').dataset.id); if(!r) return;
+    pri.classList.remove('p'+r.pri);
+    r.pri = (r.pri+1) % PRI_NAMES.length;
+    pri.classList.add('p'+r.pri); pri.setAttribute('aria-label','Priority: '+PRI_NAMES[r.pri]);
+    await store.set('rows',rows); return;
+  }
   if(e.target.dataset.rm){
     const id = e.target.closest('.d-row').dataset.id;
     rows = rows.filter(x=>x.id!==id); await store.set('rows',rows); renderRows();
   }
 });
 $('addRow').onclick = async ()=>{
-  rows.push({id:uid(),h:'',m:'',task:'',cat:'Work',mand:false});
+  rows.push({id:uid(),h:'',m:'',task:'',cat:'Work',done:false,pri:0});
   await store.set('rows',rows); renderRows();
   const last = $('rows').lastElementChild; if(last) last.querySelector('[data-f="h"]').focus();
 };
@@ -918,6 +954,11 @@ $('sortRows').onclick = async ()=>{
   const t = r => (r.h===''?99:r.h)*60 + (r.m===''?0:r.m);
   rows.sort((a,b)=>t(a)-t(b)); await store.set('rows',rows); renderRows();
 };
+$('sortPri').onclick = async ()=>{
+  const p = r => r.pri || 99;   // no heart sinks to the bottom
+  rows.sort((a,b)=>p(a)-p(b)); await store.set('rows',rows); renderRows();
+};
+twoStep($('clearDone'),'Tap again to clear', async ()=>{ rows=rows.filter(r=>!r.done); await store.set('rows',rows); renderRows(); });
 twoStep($('clearRows'),'Tap again to clear', async ()=>{ rows=[]; await store.set('rows',rows); renderRows(); });
 
 /* ───── Timer (classic dial) ───── */
@@ -1091,7 +1132,7 @@ $('importFile').addEventListener('change', e=>{
       const d = JSON.parse(fr.result);
       if(!d || d.app!=='machasal') throw new Error('not a backup');
       events = (d.events && typeof d.events==='object') ? d.events : {};
-      rows = Array.isArray(d.rows) ? d.rows : [];
+      rows = Array.isArray(d.rows) ? normRows(d.rows) : [];
       mainImg = (d.mainImg && d.mainImg.out) ? d.mainImg : null;
       await store.set('events',events); await store.set('rows',rows); await store.set('mainImg',mainImg);
       if(['lukas','leonard'].includes(d.theme)) setTheme(d.theme);
@@ -1115,7 +1156,7 @@ if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
   const th = await store.get('theme');
   setTheme(['lukas','leonard'].includes(th) ? th : 'lukas', false);
   events = (await store.get('events')) || {};
-  rows = (await store.get('rows')) || [];
+  rows = normRows((await store.get('rows')) || []);
   mainImg = await store.get('mainImg');
   renderHome(); renderCal(); renderRows(); drawTimer();
 })();
